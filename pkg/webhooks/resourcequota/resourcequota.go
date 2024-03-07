@@ -1,56 +1,68 @@
-// pkg/webhooks/resourcequota.go
-
 package resourcequota
 
 import (
-	admissionregv1 "k8s.io/api/admissionregistration/v1"
+	"log"
+	"net/http"
+
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	admissionctl "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-// ResourceQuotaWebhookName is the name of the resource quota webhook
-const ResourceQuotaWebhookName = "resourcequota-validation"
+const (
+	WebhookName string = "resourcequota-validation"
+	docString   string = `Webhook to prevent CU to apply ResourceQuotas on Openshift Managed Namespaces`
+)
 
-// ResourceQuotaWebhook implements the Webhook interface for resource quotas.
-type ResourceQuotaWebhook struct {
-	decoder *admissionctl.Decoder
-}
-
-// NewWebhook creates a new webhook for ResourceQuota validation
-func NewResourceQuotaWebhook(decoder *admissionctl.Decoder) Webhook {
-	return &ResourceQuotaWebhook{decoder: decoder}
-}
-
-func (w *ResourceQuotaWebhook) Authorized(request admissionctl.Request) admissionctl.Response {
-	return admissionctl.Allowed("Authorized")
-}
-
-func (w *ResourceQuotaWebhook) GetURI() string {
-	return "/validate-resourcequota"
-}
-
-func (w *ResourceQuotaWebhook) Validate(req admissionctl.Request) bool {
-	resourceQuota := &corev1.ResourceQuota{}
-	err := w.decoder.Decode(req, resourceQuota)
+// NewWebhook creates the new webhook for ResourceQuotas
+func NewWebhook() *ResourceQuotaWebhook {
+	scheme := runtime.NewScheme()
+	// Add the schemes for the AdmissionReview and corev1 resources, as these are likely
+	// needed for handling ResourceQuota admission requests
+	err := admissionv1.AddToScheme(scheme)
 	if err != nil {
-		return false
+		log.Fatalf("Failed to add admissionv1 scheme to ResourceQuotaWebhook: %v", err)
 	}
-	// Implement your validation logic here
-	// For example, check if the ResourceQuota is targeting managed namespaces
-	return true
+	err = corev1.AddToScheme(scheme)
+	if err != nil {
+		log.Fatalf("Failed to add corev1 scheme to ResourceQuotaWebhook: %v", err)
+	}
+
+	return &ResourceQuotaWebhook{
+		s: *scheme,
+	}
 }
 
-func (w *ResourceQuotaWebhook) Name() string {
-	return ResourceQuotaWebhookName
+// Webhook logic
+type ResourceQuotaPreventer struct {
+	// Embed necessary structs here (Decoder, Client, etc.)
 }
 
-func (w *ResourceQuotaWebhook) FailurePolicy() admissionregv1.FailurePolicyType {
-	return admissionregv1.Fail
+func (s *ResourceQuotaPreventer) Authorized(request admissionctl.Request) admissionctl.Response {
+	// Assuming you have a method to check if a namespace is managed
+	isManagedNamespace, err := s.isNamespaceManaged(request.Namespace)
+	if err != nil {
+		// Handle error, possibly logging it and returning an errored response
+		return admissionctl.Errored(http.StatusInternalServerError, err)
+	}
+
+	if isManagedNamespace {
+		return admissionctl.Denied("Applying ResourceQuotas to OpenShift Managed Namespaces is not allowed.")
+	}
+
+	return admissionctl.Allowed("Request is allowed")
 }
 
-// Define other required methods based on the Webhook interface...
-
-// init function to register this webhook
-func init() {
-	Register(ResourceQuotaWebhookName, func() Webhook { return &ResourceQuotaWebhook{} })
+// Example implementation of isNamespaceManaged
+func (s *ResourceQuotaPreventer) isNamespaceManaged(namespace string) (bool, error) {
+	// Logic to determine if the namespace is managed
+	// This is just a placeholder. Your actual implementation will vary.
+	return false, nil
 }
+
+func (s *ResourceQuotaPreventer) GetURI() string {
+	// URI where the webhook will be served
+	return "/prevent-resource-quotas"
+}
+
+// Implement other required methods following the framework's pattern
